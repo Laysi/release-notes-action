@@ -1,0 +1,17 @@
+# The action's only hard promise is that it never fails the caller's release,
+# so the test is what guards it.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun test.ts

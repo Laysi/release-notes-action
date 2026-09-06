@@ -1,0 +1,53 @@
+# Turns a commit list into grouped release notes with an OpenAI-compatible
+# model. Nothing here is specific to one product: the caller decides which
+# commits go in, and `context` says what the project is.
+#
+# The action never fails the job. When the model is not configured or the call
+# fails, the output file holds the commit list unchanged and `failed` is 1, so
+# a release still gets published -- for a repository whose release page is the
+# distribution, losing the page is worse than losing the prose.
+
+name: AI release notes
+description: 把 commit 清單交給 OpenAI 相容的模型，整理成分組的發版說明；呼叫失敗就原樣交回 commit 清單。
+
+inputs:
+  commits-file:
+    description: commit 主旨清單，一行一條。要濾掉哪些 commit 由呼叫端自己決定。
+    required: true
+  context:
+    description: 這個專案是什麼、讀者是誰。接在寫作規則前面交給模型。
+    default: ""
+  base-url:
+    description: OpenAI 格式端點的網址，接到 /chat/completions 之前為止。留空時取環境變數 AI_BASE_URL，再留空就是 https://api.openai.com/v1。
+    default: ""
+  model:
+    description: 模型代號。留空時取環境變數 AI_MODEL；兩邊都空就不呼叫。
+    default: ""
+  api-key:
+    description: 該端點的金鑰，以 bearer token 送出。留空時取環境變數 AI_API_KEY。
+    default: ""
+  extra-headers:
+    description: 額外的請求標頭，一行一個 `Name: value`。模型前面那層閘道要的東西，例如 Cloudflare AI Gateway 開了認證時的 cf-aig-authorization。
+    default: ""
+
+outputs:
+  file:
+    description: 產生的 markdown 檔路徑。模型失敗時內容等於 commits-file。
+    value: ${{ steps.notes.outputs.file }}
+  failed:
+    description: 模型沒有寫出說明時為 1，其餘為 0。
+    value: ${{ steps.notes.outputs.failed }}
+
+runs:
+  using: composite
+  steps:
+    - id: notes
+      shell: bash
+      env:
+        COMMITS_FILE: ${{ inputs.commits-file }}
+        CONTEXT: ${{ inputs.context }}
+        INPUT_BASE_URL: ${{ inputs.base-url }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_EXTRA_HEADERS: ${{ inputs.extra-headers }}
+      run: bash "$GITHUB_ACTION_PATH/notes.sh"
