@@ -30,7 +30,7 @@ jobs:
           base-url: ${{ vars.AI_BASE_URL }}
           model: ${{ vars.AI_MODEL }}
           api-key: ${{ secrets.AI_API_KEY }}
-          extra-headers: ${{ secrets.CF_AIG_TOKEN && format('cf-aig-authorization: Bearer {0}', secrets.CF_AIG_TOKEN) || '' }}
+          extra-headers: "${{ secrets.CF_AIG_TOKEN && format('cf-aig-authorization: Bearer {0}', secrets.CF_AIG_TOKEN) || '' }}"
 
       - run: |
           {
