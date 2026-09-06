@@ -1,0 +1,41 @@
+# Calls the real endpoint with the organization's settings. Run by hand: it
+# spends tokens, and it is the only check that covers the half test.ts stubs
+# out -- that AI_BASE_URL, AI_MODEL, AI_API_KEY and the gateway credential
+# actually reach a model.
+#
+#   gh workflow run smoke.yml -f tag=v1.0.0
+
+name: Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to describe
+        default: v1.0.0
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: notes
+        uses: ./
+        with:
+          tag: ${{ inputs.tag }}
+          context: release-notes-action 是一個把 commit 清單交給模型整理成發版說明的 GitHub Action。
+          base-url: ${{ vars.AI_BASE_URL }}
+          model: ${{ vars.AI_MODEL }}
+          api-key: ${{ secrets.AI_API_KEY }}
+          extra-headers: ${{ secrets.CF_AIG_TOKEN && format('cf-aig-authorization: Bearer {0}', secrets.CF_AIG_TOKEN) || '' }}
+
+      - run: |
+          {
+            echo "failed=${{ steps.notes.outputs.failed }} range=${{ steps.notes.outputs.range }}"
+            echo
+            cat "${{ steps.notes.outputs.file }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "${{ steps.notes.outputs.failed }}" = 0
