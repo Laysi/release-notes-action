@@ -1,39 +1,54 @@
 # release-notes-action
 
-This GitHub Action turns a list of commit subjects into grouped release notes. It sends the list to any endpoint that speaks the OpenAI chat/completions format, so you can use a hosted provider, a compatible gateway, or a local server.
+This GitHub Action reads the commits a tag added and turns them into grouped release notes. It sends the list to any endpoint that speaks the OpenAI chat/completions format, so you can use a hosted provider, a compatible gateway, or a local server.
 
-The action does not fail the caller's job when the model is not configured, the request fails, or the model returns no usable explanation. In those cases, the output file contains the input commit list unchanged and `failed` is `1`. This matters when the repository's release page is the distribution channel: plain commit subjects are better than publishing no release at all.
+You give it a tag. It works out the previous tag, filters the commits, calls the model, and writes a Markdown file. Your workflow is one step.
+
+The action does not fail the caller's job when the model is not configured, the request fails, or the model returns no usable explanation. In those cases, the output file contains the plain commit list and `failed` is `1`. This matters when the repository's release page is the distribution channel: plain commit subjects are better than publishing no release at all.
 
 ## Usage
 
+Check out the full history and tags, then call the action with the tag you are releasing.
+
 ```yaml
-env:
-  PREVIOUS_TAG: v1.2.2
-  TAG: v1.2.3
+on:
+  push:
+    tags: ["v*"]
 
-steps:
-  - name: Build commit list
-    run: git log --no-merges --pretty='- %s' "$PREVIOUS_TAG..$TAG" > commits.md
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-  - name: Write release notes
-    id: notes
-    uses: Laysi/release-notes-action@v1
-    with:
-      commits-file: commits.md
-      context: This project is a financial and human resources system. The readers are the people who install and operate it.
-      base-url: ${{ vars.AI_BASE_URL }}
-      model: ${{ vars.AI_MODEL }}
-      api-key: ${{ secrets.AI_API_KEY }}
+      - id: notes
+        uses: Laysi/release-notes-action@v1
+        with:
+          tag: ${{ github.ref_name }}
+          context: This project is a financial and human resources system. The readers are the people who install and operate it.
+          base-url: ${{ vars.AI_BASE_URL }}
+          model: ${{ vars.AI_MODEL }}
+          api-key: ${{ secrets.AI_API_KEY }}
 
-  - name: Publish release
-    run: gh release create "$TAG" --notes-file "${{ steps.notes.outputs.file }}"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --notes-file "${{ steps.notes.outputs.file }}"
 ```
+
+`fetch-depth: 0` is required. A shallow clone has neither the tag nor the commits, and the action fails rather than publishing empty notes.
 
 ## Inputs
 
 | Name | Required | Default | Description |
 | --- | --- | --- | --- |
-| `commits-file` | Yes | — | A list of commit subjects, one per line. The caller decides which commits to include. |
+| `tag` | Yes | — | The tag being released. |
+| `tag-pattern` | No | `*` | Which tags count as previous versions. A repository that ships two things from one history has two tag prefixes, and the wrong one gives the wrong range. |
+| `previous-tag` | No | `""` | Set this to skip the lookup above. |
+| `exclude-paths` | No | `""` | Paths to leave out, comma or newline separated. |
+| `exclude-types` | No | `ci,chore` | Conventional-commit types to drop, comma separated. Set to an empty string to keep everything. |
+| `limit` | No | `40` | The most commits to send. |
 | `context` | No | `""` | What the project is and who reads the notes. This is placed before the writing rules in the request. |
 | `base-url` | No | `""` | The OpenAI-format endpoint URL up to, but not including, `/chat/completions`. An empty value falls back to `AI_BASE_URL`, then `https://api.openai.com/v1`. |
 | `model` | No | `""` | The model identifier. An empty value falls back to `AI_MODEL`; if both are empty, no request is made. |
@@ -44,8 +59,17 @@ steps:
 
 | Name | Description |
 | --- | --- |
-| `file` | The path to the generated Markdown file. If the model fails, its contents are the same as `commits-file`. |
+| `file` | The path to the generated Markdown file. If the model fails, it holds the commit list instead. |
 | `failed` | `1` when the model did not write the release notes; otherwise `0`. |
+| `previous-tag` | The previous tag that was found, or empty for a first release. |
+| `range` | The commit range that was read. |
+
+Read `failed` when you would rather stop than publish a plain commit list:
+
+```yaml
+- if: steps.notes.outputs.failed == '1'
+  run: exit 1
+```
 
 ## Endpoint examples
 

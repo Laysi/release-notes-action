@@ -1,47 +1,91 @@
 #!/usr/bin/env bash
-# Rewrites a commit list as grouped release notes, using any endpoint that
-# speaks the OpenAI chat-completions format.
+# Reads the commits a tag added, rewrites them as grouped release notes with
+# any endpoint that speaks the OpenAI chat-completions format, and writes the
+# markdown to a file.
 #
-#   COMMITS_FILE=commits.md AI_MODEL=gpt-5 AI_API_KEY=... bash notes.sh
+#   TAG=v1.2.3 AI_MODEL=gpt-5 AI_API_KEY=... bash notes.sh
 #
-# Prints nothing to stdout. Writes the markdown to a file and reports the path
-# through GITHUB_OUTPUT (or OUTPUT_FILE when run by hand).
+# The caller needs the repository checked out with its full history and tags
+# (actions/checkout with fetch-depth: 0); a shallow clone has neither the tag
+# nor the commits, and that is a configuration error, so it fails.
 #
-# It never exits non-zero on a failed call. The file then holds the commit
-# list unchanged and `failed` is 1: for a repository whose release page is
-# the distribution, publishing plain commit subjects beats publishing nothing.
+# What does not fail is the model. A missing key, an unreachable endpoint or
+# an error body leaves the file holding the plain commit list and sets
+# `failed` to 1: for a repository whose release page is the distribution,
+# publishing commit subjects beats publishing nothing.
 #
-#   COMMITS_FILE  required. Commit subjects, one per line, already filtered.
-#   CONTEXT       what the project is and who reads the notes.
-#   AI_BASE_URL   endpoint up to but not including /chat/completions.
-#                 Defaults to OpenAI. http is fine for a gateway on the same
-#                 host; over a network use https, the key travels along.
-#   AI_MODEL      model slug. Empty means no call at all.
-#   AI_API_KEY    key for that endpoint, sent as a bearer token.
+#   TAG            required. The tag being released.
+#   TAG_PATTERN    which tags count as previous versions. Default `*`. A
+#                  repository shipping two things from one history has two tag
+#                  prefixes, and the wrong one gives the wrong range.
+#   PREVIOUS_TAG   skips the lookup above.
+#   EXCLUDE_PATHS  paths to leave out, comma or newline separated.
+#   EXCLUDE_TYPES  conventional-commit types to drop. Default `ci,chore`.
+#   LIMIT          most commits to send. Default 40.
+#   CONTEXT        what the project is and who reads the notes.
+#   AI_BASE_URL    endpoint up to but not including /chat/completions.
+#                  Defaults to OpenAI. http is fine for a gateway on the same
+#                  host; over a network use https, the key travels along.
+#   AI_MODEL       model slug. Empty means no call at all.
+#   AI_API_KEY     key for that endpoint, sent as a bearer token.
 #   AI_EXTRA_HEADERS
-#                 extra request headers, one `Name: value` per line. What a
-#                 gateway in front of the model asks for beyond the bearer
-#                 token -- Cloudflare AI Gateway wants cf-aig-authorization
-#                 when the gateway itself is authenticated.
-#   OUTPUT_FILE   where to write. Defaults under RUNNER_TEMP.
+#                  extra request headers, one `Name: value` per line. What a
+#                  gateway in front of the model asks for beyond the bearer
+#                  token -- Cloudflare AI Gateway wants cf-aig-authorization
+#                  when the gateway itself is authenticated.
+#   OUTPUT_FILE    where to write. Defaults under RUNNER_TEMP.
 set -uo pipefail
 
 # Inputs win over environment, so a caller can set the three either on the
 # step or once on the job.
-BASE_URL="${INPUT_BASE_URL:-}"; [ -n "$BASE_URL" ] || BASE_URL="${AI_BASE_URL:-https://api.openai.com/v1}"
-MODEL="${INPUT_MODEL:-}"; [ -n "$MODEL" ] || MODEL="${AI_MODEL:-}"
-API_KEY="${INPUT_API_KEY:-}"; [ -n "$API_KEY" ] || API_KEY="${AI_API_KEY:-}"
-EXTRA_HEADERS="${INPUT_EXTRA_HEADERS:-}"; [ -n "$EXTRA_HEADERS" ] || EXTRA_HEADERS="${AI_EXTRA_HEADERS:-}"
+pick() { [ -n "$1" ] && printf '%s' "$1" || printf '%s' "$2"; }
+BASE_URL="$(pick "${INPUT_BASE_URL:-}" "${AI_BASE_URL:-https://api.openai.com/v1}")"
+MODEL="$(pick "${INPUT_MODEL:-}" "${AI_MODEL:-}")"
+API_KEY="$(pick "${INPUT_API_KEY:-}" "${AI_API_KEY:-}")"
+EXTRA_HEADERS="$(pick "${INPUT_EXTRA_HEADERS:-}" "${AI_EXTRA_HEADERS:-}")"
 BASE_URL="${BASE_URL%/}"
 
-: "${COMMITS_FILE:?COMMITS_FILE is required}"
-[ -r "$COMMITS_FILE" ] || { echo "讀不到 commit 清單：$COMMITS_FILE" >&2; exit 1; }
-OUT="${OUTPUT_FILE:-${RUNNER_TEMP:-/tmp}/ai-release-notes.md}"
-COMMITS="$(cat "$COMMITS_FILE")"
+: "${TAG:?TAG is required}"
+TAG_PATTERN="${TAG_PATTERN:-*}"
+EXCLUDE_TYPES="${EXCLUDE_TYPES-ci,chore}"
+LIMIT="${LIMIT:-40}"
+OUT="${OUTPUT_FILE:-${RUNNER_TEMP:-/tmp}/release-notes.md}"
+
+git rev-parse -q --verify "$TAG^{commit}" >/dev/null ||
+    { echo "找不到 tag $TAG。checkout 要帶 fetch-depth: 0。" >&2; exit 1; }
+
+# The previous version by version order, not by what git describe reaches:
+# a repository that ships two things from one history has two tag prefixes,
+# and describe would answer with whichever came last.
+PREV="${PREVIOUS_TAG:-}"
+[ -n "$PREV" ] || PREV="$(git tag --list "$TAG_PATTERN" --sort=-v:refname | grep -A1 -x "$TAG" | tail -n1)"
+[ "$PREV" = "$TAG" ] && PREV=""
+RANGE="$TAG"
+[ -n "$PREV" ] && RANGE="$PREV..$TAG"
+
+# Seeded with `-- .` so the array is never empty, which `set -u` would trip
+# over, and so an exclude has something to subtract from.
+PATHSPEC=(-- .)
+while IFS= read -r p; do
+    p="$(printf '%s' "$p" | tr -d '[:space:]')"
+    [ -n "$p" ] && PATHSPEC+=(":(exclude)$p")
+done <<< "${EXCLUDE_PATHS:-}"
+
+LOG="$(git log --no-merges --pretty='- %s' "$RANGE" "${PATHSPEC[@]}")" ||
+    { echo "讀不出 $RANGE 的 commit。" >&2; exit 1; }
+
+# Types are dropped by name: nothing a user runs changes when a workflow does,
+# and a changelog listing those buries the lines that do.
+if [ -n "$EXCLUDE_TYPES" ]; then
+    TYPES="$(printf '%s' "$EXCLUDE_TYPES" | tr -d '[:space:]' | tr ',' '|')"
+    LOG="$(printf '%s\n' "$LOG" | grep -vE "^- ($TYPES)(\([^)]*\))?:")"
+fi
+LOG="$(printf '%s\n' "$LOG" | head -n "$LIMIT")"
+[ -n "$LOG" ] || LOG="（此區間沒有 commit）"
 
 # Fixed rules plus the caller's one-paragraph description of the project. The
-# rules are not an input: a knob that every caller sets the same way is a
-# copy of the same paragraph in every repository.
+# rules are not an input: a knob every caller sets the same way is a copy of
+# the same paragraph in every repository.
 PROMPT="${CONTEXT:-}
 依 commit 主旨清單寫出這一版的變更說明。
 
@@ -60,9 +104,9 @@ if [ -z "$MODEL" ] || [ -z "$API_KEY" ]; then
 else
     # No temperature and no max_tokens: newer OpenAI models reject both, and
     # neither buys anything here.
-    REQ="$(jq -n --arg m "$MODEL" --arg s "$PROMPT" --arg u "$COMMITS" \
+    REQ="$(jq -n --arg m "$MODEL" --arg s "$PROMPT" --arg u "$LOG" \
         '{model: $m, messages: [{role: "system", content: $s}, {role: "user", content: $u}]}')" || ERR="jq 組不出請求"
-    # Seeded so the array is never empty, which `set -u` would trip over.
+
     HEADERS=(-H 'Content-Type: application/json' -H "Authorization: Bearer $API_KEY")
     while IFS= read -r line; do
         [ -n "$line" ] && HEADERS+=(-H "$line")
@@ -86,7 +130,7 @@ if [ -n "$CONTENT" ]; then
     printf '%s\n' "$CONTENT" > "$OUT"
     FAILED=0
 else
-    printf '%s\n' "$COMMITS" > "$OUT"
+    printf '%s\n' "$LOG" > "$OUT"
     FAILED=1
     echo "[release-notes] 模型整理失敗，改用 commit 清單：$ERR" >&2
 fi
@@ -94,6 +138,8 @@ fi
 {
     printf 'file=%s\n' "$OUT"
     printf 'failed=%s\n' "$FAILED"
+    printf 'previous-tag=%s\n' "$PREV"
+    printf 'range=%s\n' "$RANGE"
 } >> "${GITHUB_OUTPUT:-/dev/null}"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ "$FAILED" = 1 ]; then

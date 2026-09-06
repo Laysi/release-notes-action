@@ -1,19 +1,37 @@
-# Turns a commit list into grouped release notes with an OpenAI-compatible
-# model. Nothing here is specific to one product: the caller decides which
-# commits go in, and `context` says what the project is.
+# Reads the commits a tag added and turns them into grouped release notes with
+# an OpenAI-compatible model. Nothing here is specific to one product: the
+# caller names the tag and says what the project is.
 #
-# The action never fails the job. When the model is not configured or the call
-# fails, the output file holds the commit list unchanged and `failed` is 1, so
-# a release still gets published -- for a repository whose release page is the
-# distribution, losing the page is worse than losing the prose.
+# The repository must be checked out with its full history and tags
+# (actions/checkout with fetch-depth: 0).
+#
+# The action does not fail the job when the model does. The output file then
+# holds the commit list unchanged and `failed` is 1, so a release still gets
+# published -- for a repository whose release page is the distribution, losing
+# the page is worse than losing the prose.
 
 name: AI release notes
-description: 把 commit 清單交給 OpenAI 相容的模型，整理成分組的發版說明；呼叫失敗就原樣交回 commit 清單。
+description: 讀出一個 tag 帶進來的 commit，交給 OpenAI 相容的模型整理成分組的發版說明；呼叫失敗就交回 commit 清單。
 
 inputs:
-  commits-file:
-    description: commit 主旨清單，一行一條。要濾掉哪些 commit 由呼叫端自己決定。
+  tag:
+    description: 要發版的 tag。
     required: true
+  tag-pattern:
+    description: 哪些 tag 算是舊版本，用來找上一版。同一份歷史發兩個東西的 repo 有兩種前綴，挑錯就算錯區間。
+    default: "*"
+  previous-tag:
+    description: 直接指定上一版，填了就不去找。
+    default: ""
+  exclude-paths:
+    description: 不列入的路徑，逗號或換行分隔。
+    default: ""
+  exclude-types:
+    description: 要濾掉的 conventional commit 類型，逗號分隔。
+    default: ci,chore
+  limit:
+    description: 最多送出幾筆 commit。
+    default: "40"
   context:
     description: 這個專案是什麼、讀者是誰。接在寫作規則前面交給模型。
     default: ""
@@ -32,11 +50,17 @@ inputs:
 
 outputs:
   file:
-    description: 產生的 markdown 檔路徑。模型失敗時內容等於 commits-file。
+    description: 產生的 markdown 檔路徑。模型失敗時內容是 commit 清單。
     value: ${{ steps.notes.outputs.file }}
   failed:
     description: 模型沒有寫出說明時為 1，其餘為 0。
     value: ${{ steps.notes.outputs.failed }}
+  previous-tag:
+    description: 找到的上一版 tag，沒有就是空的。
+    value: ${{ steps.notes.outputs.previous-tag }}
+  range:
+    description: 實際使用的 commit 區間。
+    value: ${{ steps.notes.outputs.range }}
 
 runs:
   using: composite
@@ -44,7 +68,12 @@ runs:
     - id: notes
       shell: bash
       env:
-        COMMITS_FILE: ${{ inputs.commits-file }}
+        TAG: ${{ inputs.tag }}
+        TAG_PATTERN: ${{ inputs.tag-pattern }}
+        PREVIOUS_TAG: ${{ inputs.previous-tag }}
+        EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
+        EXCLUDE_TYPES: ${{ inputs.exclude-types }}
+        LIMIT: ${{ inputs.limit }}
         CONTEXT: ${{ inputs.context }}
         INPUT_BASE_URL: ${{ inputs.base-url }}
         INPUT_MODEL: ${{ inputs.model }}
