@@ -119,16 +119,25 @@ else
     done <<< "$EXTRA_HEADERS"
 
     if [ -z "$ERR" ]; then
-        RESP="$(curl -sS --connect-timeout 10 --max-time 300 "$BASE_URL/chat/completions" \
+        # The status code is appended on its own line: a gateway that rejects
+        # the request answers with a body this script cannot read, and without
+        # the code the log says only that there was no content.
+        RAW="$(curl -sS --connect-timeout 10 --max-time 300 -w '\n%{http_code}' "$BASE_URL/chat/completions" \
             "${HEADERS[@]}" \
-            -d "$REQ" 2>&1)" || ERR="呼叫 $BASE_URL 失敗：$RESP"
+            -d "$REQ" 2>&1)" || ERR="呼叫 $BASE_URL 失敗：$RAW"
+        CODE="${RAW##*$'\n'}"
+        RESP="${RAW%$'\n'*}"
     fi
     if [ -z "$ERR" ]; then
         CONTENT="$(printf '%s' "$RESP" | jq -r '.choices[0].message.content // empty' 2>/dev/null)" || CONTENT=""
-        # OpenAI-style .error.message, or the .detail/.message that some
-        # compatible gateways answer with.
-        [ -n "$CONTENT" ] || ERR="$(printf '%s' "$RESP" | jq -r '(.error.message // .detail // .message // "模型沒有回覆內容") | tostring' 2>/dev/null)"
-        [ -n "$CONTENT" ] || [ -n "$ERR" ] || ERR="模型沒有回覆內容"
+        if [ -z "$CONTENT" ]; then
+            # OpenAI-style .error.message, or the .detail/.message that some
+            # compatible gateways answer with. Anything else is reported raw,
+            # truncated: an unreadable body still says what went wrong.
+            ERR="$(printf '%s' "$RESP" | jq -r '(.error.message // .detail // .message) | tostring' 2>/dev/null)"
+            [ -n "$ERR" ] || ERR="$(printf '%s' "$RESP" | head -c 400)"
+            ERR="HTTP ${CODE}: ${ERR:-回應是空的}"
+        fi
     fi
 fi
 

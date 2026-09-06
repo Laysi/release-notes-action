@@ -35,6 +35,7 @@ jobs:
       - run: |
           {
             echo "failed=${{ steps.notes.outputs.failed }} range=${{ steps.notes.outputs.range }}"
+            echo "base-url=${{ vars.AI_BASE_URL }} model=${{ vars.AI_MODEL }}"
             echo
             cat "${{ steps.notes.outputs.file }}"
           } >> "$GITHUB_STEP_SUMMARY"
