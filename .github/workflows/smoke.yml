@@ -13,6 +13,12 @@ on:
       tag:
         description: Tag to describe
         default: v1.0.0
+      base-url:
+        description: Overrides vars.AI_BASE_URL, for trying an endpoint before setting it
+        default: ""
+      model:
+        description: Overrides vars.AI_MODEL
+        default: ""
 
 jobs:
   smoke:
@@ -27,8 +33,8 @@ jobs:
         with:
           tag: ${{ inputs.tag }}
           context: release-notes-action 是一個把 commit 清單交給模型整理成發版說明的 GitHub Action。
-          base-url: ${{ vars.AI_BASE_URL }}
-          model: ${{ vars.AI_MODEL }}
+          base-url: ${{ inputs.base-url || vars.AI_BASE_URL }}
+          model: ${{ inputs.model || vars.AI_MODEL }}
           api-key: ${{ secrets.AI_API_KEY }}
           extra-headers: "${{ secrets.CF_AIG_TOKEN && format('cf-aig-authorization: Bearer {0}', secrets.CF_AIG_TOKEN) || '' }}"
 
