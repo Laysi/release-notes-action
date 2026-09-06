@@ -143,6 +143,17 @@ await run({ ...ai, AI_EXTRA_HEADERS: "cf-aig-authorization: Bearer cf" });
 ok("送出額外的標頭", seen?.gateway === "Bearer cf");
 ok("額外的標頭不取代金鑰", seen?.auth === "Bearer k");
 
+// A gateway holding the key for you: Cloudflare AI Gateway skips its stored
+// key if the request carries an Authorization header, so the call has to go
+// out without one.
+await run({
+  AI_BASE_URL: base,
+  AI_MODEL: "m",
+  AI_EXTRA_HEADERS: "cf-aig-authorization: Bearer cf",
+});
+ok("沒有金鑰但有認證標頭仍然呼叫", seen?.gateway === "Bearer cf");
+ok("沒有金鑰就不送 Authorization", seen?.auth === "");
+
 await run({ ...ai, AI_BASE_URL: "https://192.0.2.1/v1", INPUT_BASE_URL: base });
 ok("input 覆蓋環境變數", seen?.path === "/v1/chat/completions");
 

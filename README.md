@@ -52,7 +52,7 @@ jobs:
 | `context` | No | `""` | What the project is and who reads the notes. This is placed before the writing rules in the request. |
 | `base-url` | No | `""` | The OpenAI-format endpoint URL up to, but not including, `/chat/completions`. An empty value falls back to `AI_BASE_URL`, then `https://api.openai.com/v1`. |
 | `model` | No | `""` | The model identifier. An empty value falls back to `AI_MODEL`; if both are empty, no request is made. |
-| `api-key` | No | `""` | The key for the endpoint, sent as a bearer token. An empty value falls back to `AI_API_KEY`. |
+| `api-key` | No | `""` | The key for the endpoint, sent as a bearer token. An empty value falls back to `AI_API_KEY`. Leave it unset when a gateway holds the key; Cloudflare AI Gateway skips its stored key if the request carries an `Authorization` header. |
 | `extra-headers` | No | `""` | Additional request headers, one `Name: value` per line. |
 
 ## Outputs
@@ -109,6 +109,22 @@ For the first form, use a Cloudflare API token as `api-key`. For the second form
 
 ```yaml
 extra-headers: cf-aig-authorization: Bearer ${{ secrets.CF_AIG_TOKEN }}
+```
+
+OpenRouter is not one of the gateway's built-in providers. Register it as a [custom provider](https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/) with `base_url` `https://openrouter.ai/api`, then point `base-url` at that provider's path and use OpenRouter's own model id:
+
+```yaml
+base-url: https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/custom-openrouter/v1
+model: anthropic/claude-sonnet-4.5
+api-key: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+With a key stored in the gateway (BYOK), leave `api-key` unset and authenticate to the gateway instead. A provider key on the request wins over the stored one, so sending both means the stored key is never used:
+
+```yaml
+extra-headers: |
+  cf-aig-authorization: Bearer ${{ secrets.CF_AIG_TOKEN }}
+  cf-aig-byok-alias: default
 ```
 
 ## Request shape

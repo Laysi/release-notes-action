@@ -27,7 +27,10 @@
 #                  Defaults to OpenAI. http is fine for a gateway on the same
 #                  host; over a network use https, the key travels along.
 #   AI_MODEL       model slug. Empty means no call at all.
-#   AI_API_KEY     key for that endpoint, sent as a bearer token.
+#   AI_API_KEY     key for that endpoint, sent as a bearer token. Leave it out
+#                  when a gateway holds the key for you -- Cloudflare AI
+#                  Gateway skips its stored key entirely if the request
+#                  carries an Authorization header of its own.
 #   AI_EXTRA_HEADERS
 #                  extra request headers, one `Name: value` per line. What a
 #                  gateway in front of the model asks for beyond the bearer
@@ -99,15 +102,18 @@ PROMPT="${CONTEXT:-}
 
 CONTENT=""
 ERR=""
-if [ -z "$MODEL" ] || [ -z "$API_KEY" ]; then
-    ERR="沒有設定 AI_MODEL 或 AI_API_KEY"
+if [ -z "$MODEL" ]; then
+    ERR="沒有設定 AI_MODEL"
+elif [ -z "$API_KEY" ] && [ -z "$EXTRA_HEADERS" ]; then
+    ERR="沒有設定 AI_API_KEY，也沒有其他認證標頭"
 else
     # No temperature and no max_tokens: newer OpenAI models reject both, and
     # neither buys anything here.
     REQ="$(jq -n --arg m "$MODEL" --arg s "$PROMPT" --arg u "$LOG" \
         '{model: $m, messages: [{role: "system", content: $s}, {role: "user", content: $u}]}')" || ERR="jq 組不出請求"
 
-    HEADERS=(-H 'Content-Type: application/json' -H "Authorization: Bearer $API_KEY")
+    HEADERS=(-H 'Content-Type: application/json')
+    [ -n "$API_KEY" ] && HEADERS+=(-H "Authorization: Bearer $API_KEY")
     while IFS= read -r line; do
         [ -n "$line" ] && HEADERS+=(-H "$line")
     done <<< "$EXTRA_HEADERS"
