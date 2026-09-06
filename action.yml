@@ -45,7 +45,7 @@ inputs:
     description: 該端點的金鑰，以 bearer token 送出。留空時取環境變數 AI_API_KEY。
     default: ""
   extra-headers:
-    description: 額外的請求標頭，一行一個 `Name: value`。模型前面那層閘道要的東西，例如 Cloudflare AI Gateway 開了認證時的 cf-aig-authorization。
+    description: "額外的請求標頭，一行一個 `Name: value`。模型前面那層閘道要的東西，例如 Cloudflare AI Gateway 開了認證時的 cf-aig-authorization。"
     default: ""
 
 outputs:

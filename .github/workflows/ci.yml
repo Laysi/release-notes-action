@@ -15,3 +15,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun test.ts
+
+      # Both YAML files here have already been broken by an unquoted colon
+      # inside a value, and neither the unit test nor a push notices: an
+      # unparseable action.yml only fails when a caller runs it.
+      - run: |
+          python3 -c "
+          import glob, yaml
+          for f in ['action.yml'] + glob.glob('.github/workflows/*.yml'):
+              yaml.safe_load(open(f))
+              print(f, 'ok')
+          "
